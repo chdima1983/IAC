@@ -1,7 +1,9 @@
 - hosts: web-server
   become: true
-#  gather_facts: no
-  
+
+  vars:
+    ssh_key_filename: id_rsa_myproject
+
   tasks:
     - name: Update all packages to their latest version
       ansible.builtin.apt:
@@ -18,12 +20,10 @@
           - gnupg
           - lsb-release
           - htop
+          - git
+          - python3-pip
+          - python3-setuptools 
       
-    - name: Update repo git
-      apt_repository:
-        repo: "ppa:git-core/ppa"
-        state: present
-
     - name: Install apt key
       ansible.builtin.apt_key:
         url: "https://download.docker.com/linux/ubuntu/gpg"
@@ -41,40 +41,27 @@
         update_cache: yes
         pkg:
           - docker-ce
-          - docker-ce-cli
-          - containerd.io
-          - docker-compose-plugin
 
 # install docker-compose 1.26.0 version
     - name: install docker-compose
       get_url:
-        url: https://github.com/docker/compose/releases/download/1.26.0/docker-compose-{{ ansible_system }}-{{ ansible_userspace_architecture }}
+        url: https://github.com/docker/compose/releases/download/v2.6.0/docker-compose-linux-x86_64
         dest: /usr/local/bin/docker-compose
-        mode: 'u+x,g+x'
+        mode: '775'
 
-# create a symbolic link to /usr/bin 
-    - name: Create symlink
-      file: src=/usr/local/bin/docker-compose dest=/usr/bin/docker-compose state=link
-    
     - name: adding existing user "{{ ansible_user }}" to group docker
       user:
         name: "{{ ansible_user }}"
         groups: docker
         append: yes
-      become: yes
 
-    - name: Install git
-      apt:
-        name: git
-        state: present
-        update_cache: yes
+    - name: install 'Docker SDK for Python'
+      pip:
+        name:
+          - docker
+          - docker-compose
 
 ## Generate SSH Key and read content
-- name: generate SSH key
-  hosts: web-server
-  vars:
-    ssh_key_filename: id_rsa_myproject
-  tasks:
     - name: generate SSH key "{{ssh_key_filename}}"
       openssh_keypair:
         path: "~/.ssh/{{ssh_key_filename}}"
@@ -82,13 +69,16 @@
         size: 4096
         state: present
         force: no
-    - name: "Read a file content"
-      shell: |
-        cat ~/.ssh/id_rsa_myproject.pub 
-      register: file_content
-    - name: "Print the file content to a console"
-      debug:
-        msg: "{{ file_content.stdout }}"
+ 
+    - name: Read id_rsa_myproject
+      ansible.builtin.slurp:
+        src: ~/.ssh/id_rsa_myproject.pub
+      register: mounts
+
+    - name: Print returned information
+      ansible.builtin.debug:
+        msg: "{{ mounts['content'] | b64decode }}"
+
     - name: A helpful reminder of what to look out for post-update
       ansible.builtin.pause:
         prompt:  "Be sure to copy the public key to your git repository settings. Don't continue until this is done."
@@ -112,18 +102,9 @@
     - name: Write env files
       copy:
         src: ./.env
-        dest: ~/flaskapi/
+        dest: /home/ubuntu/flaskapi/
 
-#    - name: Run `docker-compose up`
-#      become: true
-#      community.docker.docker_compose:
-#        state: present
-#        project_src: "/home/ubuntu/flaskapi/"
-
-## run docker-compose with my env
-    - name: Run container
-      become: true
-      shell:
-        chdir: /home/ubuntu/flaskapi/
-        cmd: "docker-compose up -d"
-
+    - name: Run `docker-compose up`
+      community.docker.docker_compose:
+        state: present
+        project_src: "/home/ubuntu/flaskapi/"
